@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  DBPassword:
+    NoEcho: 'true'
+    Description: Password database access
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+Resources:
+  ApplicationLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: WebappLaunchTemplate
+      LaunchTemplateData:
+        ImageId: ami-089950bc622d39ed8
+        InstanceType: t1.micro
+        KeyName: myEc2instance
+        SecurityGroupIds:
+          - sg-0db58dd15b3d855ea
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              yum update -y
+              yum install -y docker
+              service docker start
+              docker pull bkimminich/juice-shop
+              docker run -d -p 80:3000 bkimminich/juice-shop
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: vpc-0940cb2d7fbcc8677
+      TargetType: instance
+      Port: 80
+      Protocol: HTTP
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref ApplicationLaunchTemplate
+        Version: !GetAtt ApplicationLaunchTemplate.LatestVersionNumber
+      MaxSize: '6'
+      MinSize: '3'
+      DesiredCapacity: '3'
+      VPCZoneIdentifier:
+        - subnet-00bc6db72644335b7
+        - subnet-03971208760c4df64
+        - subnet-00d6d6a5ede80cd42
+      TargetGroupARNs:
+        - !Ref TargetGroup      
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - subnet-00bc6db72644335b7
+        - subnet-03971208760c4df64
+        - subnet-00d6d6a5ede80cd42
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  myCPUPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 50
+  FileSystemResource:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      BackupPolicy:
+        Status: ENABLED
+      Encrypted: false
+      FileSystemTags:
+        - Key: Name
+          Value: TestFileSystem
+  MountTargetResource1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: subnet-00bc6db72644335b7
+      SecurityGroups:
+      - sg-0db58dd15b3d855ea
+  MountTargetResource2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: subnet-03971208760c4df64
+      SecurityGroups:
+      - sg-0db58dd15b3d855ea
+  MountTargetResource3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: subnet-00d6d6a5ede80cd42
+      SecurityGroups:
+      - sg-0db58dd15b3d855ea
+  MyDB:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBInstanceIdentifier: testdatabase
+      DBName: databasetest
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      Engine: postgres
+      EngineVersion: "13.7"
+      MasterUsername: postgres
+      MasterUserPassword: !Ref DBPassword
